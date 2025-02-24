@@ -23,13 +23,53 @@ const uint sm = 0;
 #define DIVIDER_PWM 16 // Divisor fracional do clock para o PWM
 
 #define CURRENTLY_YEAR 2024
-#define MAX_YEARS 100
+#define MAX_YEARS 1
 #define MAX_MONTHS 12
 #define MAX_DAYS 31
-#define MAX_MOOD 5
+#define MAX_MOOD 6
+
+#define LED_COUNT 25 //Quantidade de leds na matriz
+
+typedef struct color
+{
+    uint r;
+    uint g;
+    uint b;
+}color;
+
+//Como a fita de led utilizada na matriz é indexada linearmente, traduzi cada index para uma coordenada em uma matriz 5X5
+//Não é necessário, mas facilita a visualização da matriz no código, e ter certeza de como ela aparecerá na matriz de leds
+const int translated_indexes[LED_COUNT][2] = {
+    {4,4},
+    {4,3},
+    {4,2},
+    {4,1},
+    {4,0},
+    {3,0},
+    {3,1},
+    {3,2},
+    {3,3},
+    {3,4},
+    {2,4},
+    {2,3},
+    {2,2},
+    {2,1},
+    {2,0},
+    {1,0},
+    {1,1},
+    {1,2},
+    {1,3},
+    {1,4},
+    {0,4},
+    {0,3},
+    {0,2},
+    {0,1},
+    {0,0}
+    };
 
 char labels[6][6] = {"Menu", "Ano", "Mes", "Dia", "Humor", "Frase"};
-char mood_labels[5][9] = {"Feliz", "Triste", "Neutro", "Cansado", "Produtivo"};
+char mood_labels[6][9] = {" --- ", "Feliz", "Triste", "Neutro", "Cansado", "Produtivo"};
+color mood_colors[6] = {{0, 0, 0}, {0, 1, 0}, {1, 0, 0}, {1, 1, 0}, {0, 0, 1}, {0, 1, 1}};
 
 typedef enum action_enum
 {
@@ -52,6 +92,7 @@ typedef enum screens_enum
 
 typedef enum mood_enum
 {
+    NOT_SELECTED,
     FELIZ,
     TRISTE,
     NEUTRO,
@@ -59,49 +100,19 @@ typedef enum mood_enum
     PRODUTIVO,
 }mood_enum;
 
-typedef enum day_enum
-{
-    SEGUNDA,
-    TERCA,
-    QUARTA,
-    QUINTA,
-    SEXTA,
-    SABADO,
-    DOMINGO,
-}day_enum;
-
-typedef enum month_enum
-{
-    JANEIRO,
-    FEVEREIRO,
-    MARCO,
-    ABRIL,
-    MAIO,
-    JUNHO,
-    JULHO,
-    AGOSTO,
-    SETEMBRO,
-    OUTUBRO,
-    NOVEMBRO,
-    DEZEMBRO
-}month_enum;
-
 typedef struct day
 {
-    day_enum dayName;
     mood_enum mood;
     char phrase[32];
 }day;
 
 typedef struct month
 {
-    month_enum monthName;
     day days[31];
 }month;
 
 typedef struct year
 {
-    uint yearNumber;
     month months[12];
 } year;
 

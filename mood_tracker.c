@@ -9,7 +9,6 @@
 #include "hardware/adc.h"
 #include "hardware/pio.h"
 #include "ws2818b.pio.h"
-#include "ws2818b_interface.c"
 #include "mood_tracker.h"
 #include "ssd1306.c"
 #include "pico/bootrom.h"
@@ -24,22 +23,38 @@ void button_press(uint gpio, uint32_t events);
 void setup_pwm(int pin);
 void ssd1306_screen_update(screens_enum *screen, selected *selected, year years[MAX_YEARS]);
 void do_action(screens_enum *screen, action_enum action, year years[MAX_YEARS], selected *selected);
+void ws2818b_update(year year[MAX_YEARS], selected selected);
+void ws2818b_update_frame(PIO pio, uint sm, color matriz[5][5]);
+void ws2818b_clear(PIO pio, uint sm);
+
+bool matrix_on = true;
+int matrix_page = 0;
 
 int main()
 {
     init();
+    day days[MAX_DAYS];
+    month months[MAX_MONTHS];
+    year years[MAX_YEARS];
+    int i;
+    for(i=0; i<MAX_DAYS; i++)
+    {
+        days[i].mood = NOT_SELECTED;
+        strcpy(days[i].phrase, "");
+    }
+    for(i=0; i<MAX_MONTHS; i++)
+    {
+        memcpy(months[i].days, days, sizeof(days));
+    }
+    memcpy(years->months, months, sizeof(months));
 
-    year years[100];
     selected selected = {0, 0, 0, 0};
     screens_enum screen = MENU;
     volatile bool execute_action = false;
     volatile uint joystick_x, joystick_y = 0;
     volatile action_enum action = NOONE;
 
-    printf("Iniciando...\n");
     ssd1306_screen_update(&screen, &selected, years);
-    printf("Tela inicializada\n");
-    // reset_usb_boot(0, 0);
 
     while (true) {
         adc_select_input(0);
@@ -66,14 +81,18 @@ int main()
         {
             action = NOONE;
         }
-        printf("X: %d, Y: %d\n", joystick_x, joystick_y);
-        printf("Execute action: %d\n", execute_action);
-        printf("Screen: %d\n", screen);
-        printf("Action: %d\n", action);
 
         do_action(&screen, action, years, &selected);
         ssd1306_screen_update(&screen, &selected, years);
-        sleep_ms(200);
+        if (matrix_on)
+        {
+            ws2818b_update(years, selected);
+        }
+        else
+        {
+            ws2818b_clear(pio, sm);
+        }
+        sleep_ms(100);
     }
 }
 
@@ -147,9 +166,11 @@ void button_press(uint gpio, uint32_t events)
     {
         switch (gpio)
         {
-            case BUTTON_A:
+            case BUTTON_A:                /* code */
+                matrix_on = !matrix_on;
                 break;
             case BUTTON_B:
+                matrix_page = matrix_page == 1 ? 0 : 1;
                 break;
             case JOYSTICK_BUTTON:
                 break;
@@ -164,13 +185,29 @@ void setup_pwm(int pin)
     slice = pwm_gpio_to_slice_num(pin);    // Obtém o slice do PWM associado ao pino do pin
     pwm_set_clkdiv(slice, DIVIDER_PWM);    // Define o divisor de clock do PWM
     pwm_set_wrap(slice, PERIOD);           // Configura o valor máximo do contador (período do PWM)
-    pwm_set_gpio_level(pin, 0);            // Define o nível inicial do PWM para o pino do LED
+    pwm_set_gpio_level(pin, 100);            // Define o nível inicial do PWM para o pino do LED
     pwm_set_enabled(slice, true);          // Habilita o PWM no slice correspondente
+}
+
+void ssd1306_draw_arrow(ssd1306_t *ssd, uint8_t x0, uint8_t y0, bool invert, bool up_arrow)
+{  
+    int offset = invert ? -6 : 6;
+    if (up_arrow)
+    {
+        ssd1306_line(ssd, x0, y0, x0+3, y0+offset, true);
+        ssd1306_line(ssd, x0+6, y0, x0+3, y0+offset, true);
+        return;
+    }
+    else
+    {
+        ssd1306_line(ssd, x0, y0, x0 + offset, y0 + 3, true);
+        ssd1306_line(ssd, x0, y0+6, x0 + offset, y0 + 3, true);
+    }
 }
 
 void ssd1306_screen_update(screens_enum *screen, selected *selected, year years[MAX_YEARS])
 {
-    char text[9] = "8D";
+    char text[9] = "";
     ssd1306_fill(&display, false);
 
     ssd1306_draw_string(&display, labels[*screen], 0, 28);
@@ -190,14 +227,27 @@ void ssd1306_screen_update(screens_enum *screen, selected *selected, year years[
         break;
     case MENU_YEAR_MONTH_DAY_MOOD:
         strcpy(text, mood_labels[selected->mood]);
-        printf("Mood: %s\n", text);
-        printf("Selected mood: %d\n", selected->mood);
         break;
     default:
         break;
     }
-
     ssd1306_draw_string(&display, text, 53, 28);
+
+    ssd1306_draw_arrow(&display, 118, 43, false, false);
+    ssd1306_draw_arrow(&display, 7, 43, true, false);
+
+    ssd1306_draw_arrow(&display, 85, 23, true, true);
+    ssd1306_draw_arrow(&display, 85, 39, false, true);
+    if(matrix_on)
+        ssd1306_draw_string(&display, "MatrizON", 0, 55);
+    else
+    {
+        ssd1306_draw_string(&display, "MatrizOFF", 0, 55);
+    }
+    char page[1];
+    itoa(matrix_page, page, 10);
+    ssd1306_draw_string(&display, "Page ", 79, 55);
+    ssd1306_draw_string(&display, page, 79+(8*5), 55);
     ssd1306_send_data(&display);
 }
 
@@ -206,11 +256,10 @@ void do_action(screens_enum *screen, action_enum action, year years[MAX_YEARS], 
     if (action == RIGHT && *screen < MENU_YEAR_MONTH_DAY_MOOD)
     {
         *screen = *screen + 1;
-        printf("Screen em do action: %d\n", *screen);
     }
     else if (action == LEFT && *screen > MENU)
     {
-        *screen = *screen - 1;;
+        *screen = *screen - 1;
     }
     else if (action == UP && *screen > MENU)
     {
@@ -227,6 +276,7 @@ void do_action(screens_enum *screen, action_enum action, year years[MAX_YEARS], 
             break;
         case MENU_YEAR_MONTH_DAY_MOOD:
             selected->mood = selected->mood > 0 ? selected->mood - 1 : 0;
+            years[selected->year].months[selected->month].days[selected->day].mood = selected->mood;
             break;
         default:
             break;
@@ -247,6 +297,7 @@ void do_action(screens_enum *screen, action_enum action, year years[MAX_YEARS], 
             break;
         case MENU_YEAR_MONTH_DAY_MOOD:
             selected->mood = selected->mood < MAX_MOOD-1 ? selected->mood + 1 : MAX_MOOD-1;
+            years[selected->year].months[selected->month].days[selected->day].mood = selected->mood;
             break;
         default:
             break;
@@ -254,7 +305,49 @@ void do_action(screens_enum *screen, action_enum action, year years[MAX_YEARS], 
     }
 }
 
-// void ssd1306_update_blinking_arrows()
-// {
+void ws2818b_update(year year[MAX_YEARS], selected selected)
+{
+    uint index;
+    color matrix[5][5];
+    for (int i = 0; i < 5; i++)
+    {
+        for (int j = 0; j < 5; j++)
+        {
+            index = (i*5) + j + (matrix_page*25);
+            if (index < 31)
+            {
+                matrix[i][j] = mood_colors[year[selected.year].months[selected.month].days[index].mood];
+            }
+            else
+            {
+                matrix[i][j] = mood_colors[NOT_SELECTED];
+            }
+        }
+    }
+    ws2818b_update_frame(pio, sm, matrix);
+}
 
-// }
+//Recebe uma matriz 5x5 composta por struct color, e mostra um desenho na matriz de leds
+void ws2818b_update_frame(PIO pio, uint sm, color matriz[5][5])
+{
+    for (int k = 0; k < LED_COUNT; k++)
+    {
+        int i = translated_indexes[k][0];
+        int j = translated_indexes[k][1];
+        pio_sm_put_blocking(pio, sm, matriz[i][j].g);
+        pio_sm_put_blocking(pio, sm, matriz[i][j].r);
+        pio_sm_put_blocking(pio, sm, matriz[i][j].b);
+    }
+}
+
+void ws2818b_clear(PIO pio, uint sm)
+{
+    for (int k = 0; k < LED_COUNT; k++)
+    {
+        int i = translated_indexes[k][0];
+        int j = translated_indexes[k][1];
+        pio_sm_put_blocking(pio, sm, 0);
+        pio_sm_put_blocking(pio, sm, 0);
+        pio_sm_put_blocking(pio, sm, 0);
+    }
+}
