@@ -50,7 +50,6 @@ int main()
 
     selected selected = {0, 0, 0, 0};
     screens_enum screen = MENU;
-    volatile bool execute_action = false;
     volatile uint joystick_x, joystick_y = 0;
     volatile action_enum action = NOONE;
 
